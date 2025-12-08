@@ -584,20 +584,7 @@ def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR)
     download_files(file_names, save_dir)
     print("fichiers téléchargés")
 
-    # on affiche le premier fichier
-    filename = save_dir/file_names[0]
-
-    # Ouvrir le fichier FITS
-    lamb, pro, hdr = vsp.read_fits_table(filename)
-    date_obs = hdr['DATE-OBS']
-
-    # Tracer le spectre
-    plt.plot(lamb, pro, label=date_obs)
-    plt.xlabel('Longueur d\'onde')
-    plt.ylabel('Flux')
-    plt.title(file_names[0])
-    plt.legend()
-    plt.show()
+    return file_names
 
 def get_all_spectres_between_dates (Be_date_d, Be_date_f):
     Be_TargetName = ''
@@ -614,6 +601,114 @@ def get_all_spectres_between_dates (Be_date_d, Be_date_f):
     observer_list = [[obs, count] for obs, count in count_per_observer.items()]
     
     return object_list, observer_list, nb_spc
+
+
+def object_composer (object_name, month_now, year_now) :
+    # Download tous les spectres entre date_deb et date_fin pour un objet
+    save_dir = Path(__file__).resolve().parent / "BeSS_VO"
+    
+    # comparaison pour un objet
+    #object_name= 'OT Gem'
+    cols = 6
+    nb_max_pro = 5 *cols # maximum 5 lignes
+    
+    # récupère le mois et l'année
+    #month_now = now.month
+    #year_now = now.year
+
+    #date_fin = '2025-12-01'
+    date_fin = f"{year_now}-{month_now:02d}-01"
+    date_deb = '1901-01-01'
+    lamb_raie = '6563'
+    flag_HR = 1
+    
+    zone_norm = (6610.0, 6620.0)
+    lamb_min = 6540
+    lamb_max=6586
+    
+    file_names = object_list_from_dates(object_name, date_deb, date_fin, lamb_raie, flag_HR) 
+        
+    if len(file_names) == 0 :
+        print("Pas de spectres trouvés")
+        exit()
+        
+    if len(file_names) == 1000 :
+        date_deb = '2020-01-01'
+        file_names = object_list_from_dates(object_name, date_deb, date_fin, lamb_raie, flag_HR)
+    
+    if len(file_names) >= nb_max_pro :
+        file_names = file_names[:nb_max_pro]
+        
+        
+    # tableau de profils
+    hdrs = []
+    profils = []
+    lambs = []
+    
+    for f in file_names:
+        filename = save_dir/f
+        # Ouvrir le fichier FITS
+        lamb, pro, hdr = vsp.read_fits_table(filename)
+        # formatte les profils
+        pro = vsp.profil_norm (pro, lamb, zone_norm[0], zone_norm[1])
+        hdrs.append(hdr)
+        profils.append(pro)
+        lambs.append(lamb)
+
+    all_max = max(pro.max() for pro in profils) * 1.1
+
+    # creation graphique avec vignettes
+    n = len(profils)
+    rows = (n + cols - 1) // cols
+
+    fig, axes = plt.subplots(rows, cols, figsize=(3*cols, 3*rows),
+                         sharex=False, sharey=False)
+    
+    # force axes sous forme de tableau 2D
+    axes = np.array(axes).reshape(rows, cols)
+    # titre nom de l'objet
+    fig.suptitle(object_name, fontsize = 16 , fontweight='bold')
+    
+    for i, profile in enumerate(profils):
+        
+        date_obs = hdrs[i]['DATE-OBS'].split('T')[0]
+        
+        r = i // cols
+        c = i % cols
+        ax = axes[r, c]
+    
+        ax.plot(lambs[i],profile, linewidth=1, label= date_obs)
+        
+        # ticks vers l'intérieur sur tous les côtés et ticks actifs en haut/droite
+        ax.tick_params(axis='x', direction='in', top=True, bottom=True)
+        ax.tick_params(axis='x', labelbottom=True, labeltop=False,
+                   pad=-15)   # pad négatif pour les faire entrer dans la zone
+        ax.xaxis.set_ticks_position('both')   # affiche ticks en bas ET en haut
+        # pas de labels en Y
+        ax.set_ylabel("")
+        # retirer labels Y
+        ax.tick_params(axis='y', labelleft=False, labelright=False)
+        
+        ax.tick_params(top=True, right=True)  # active ticks top/right
+        
+        ax.set_xlim(lamb_min, lamb_max)
+        ax.set_ylim(0, all_max)
+        
+        # legend
+        ax.legend(frameon=False,handlelength=1) # trait court
+    
+    # supprimer les cases vides
+    for j in range(n, rows * cols):
+        fig.delaxes(axes[j // cols, j % cols])
+    
+    # enlever les marges autour de la grille
+    #plt.subplots_adjust(wspace=0, hspace=0, left=0, right=1, top=1, bottom=0)
+    plt.subplots_adjust(wspace=0.0, hspace=0.0,
+                    left=0.02, right=0.98, top=0.95, bottom=0.02)
+    fn = object_name+"_t.png"
+    plt.savefig(save_dir/fn, bbox_inches="tight")
+    plt.show()
+    
 
 def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_observers,liste_EE, liste_ME, liste_DE, liste_novar, liste_unique) :
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
@@ -993,6 +1088,50 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                         # Centrer le contenu de la cellule
                         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
             
+           
+                p.insert_paragraph_before() # espace après le tableau
+                
+           
+            # ---- insertion time serie des EE
+
+            new_p = p.insert_paragraph_before("Emission Event time serie")
+            new_p.style = "Heading 2"
+            
+            png_names = [n+'_t.png' for n in liste_EE]
+            png_files = [save_dir/n for n in png_names]
+            
+            # --- Construire le tableau d'images EE time serie ---
+            if png_files:
+                table = doc.add_table(rows=1, cols=images_per_row)  # Word veut au moins 1 ligne
+                # Déplacer le tableau juste avant le paragraphe contenant la balise
+                p._p.addprevious(table._tbl)
+                images_per_row = 1
+                display_width = Inches(6)  # adapté au format A4
+                
+                row_cells = table.rows[0].cells
+            
+                for i, png_file in enumerate(png_files):
+                    # Déterminer la ligne et la colonne
+                    row_idx = i // images_per_row
+                    col_idx = i % images_per_row
+            
+                    # Ajouter une nouvelle ligne si nécessaire
+                    if row_idx >= len(table.rows):
+                        row_cells = table.add_row().cells
+                    else:
+                        row_cells = table.rows[row_idx].cells
+            
+                    # Ajouter l'image dans la cellule
+                    cell = row_cells[col_idx]
+                    paragraph = cell.paragraphs[0]
+                    run = paragraph.add_run()
+                    run.add_picture(str(png_file), width=display_width)
+            
+                    # Centrer le contenu de la cellule
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+           
+   
+           
             # --- Réinsérer le texte après la balise ---
             if after.strip():
                 p.add_run(after)
@@ -1021,7 +1160,7 @@ print("Lancement de la requête")
 flag = 2
 
 #now = datetime.now()
-now= datetime(2025,10, 10) # rapport du mois - 1
+now= datetime(2025,11, 10) # rapport du mois - 1
 
 if flag == 0 :
     # comparaison pour un objet
@@ -1038,13 +1177,27 @@ if flag == 0 :
 
 elif flag == 1 :
     # Download tous les spectres entre date_deb et date_fin pour un objet
-    object_name = '194335'
-    date_fin = '2025-12-01'
-    date_deb = '2024-12-01'
-    lamb_raie = '6563'
-    flag_HR = 1
-    object_list_from_dates(object_name, date_deb, date_fin, lamb_raie, flag_HR)
+    save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
+    # comparaison pour un objet
+    object_name= 'OT Gem'
+    
+    # gestion de la date
+    months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+    ]
+    
+    # récupère le mois et l'année
+    month_now = now.month
+    year_now = now.year
+    year_name = str(now.year)
+    
+    month_name = months[month_now-2]
+    
+    object_composer(object_name, month_now, year_now)
+    
+
 elif flag == 2 :
     
     with open("tableau.txt", "w") as f:
@@ -1111,7 +1264,12 @@ elif flag == 2 :
             if not decision == "HR-BR":
                 liste_novar.append(o)
         i +=1
+   
+    print("time series")
     
+    for o in liste_EE :
+        
+        object_composer(o, month_now, year_now)
     
     create_monthly_word(month_name, year_name, nb_stars, nb_spectra,observer_list,liste_EE, liste_ME, liste_DE, liste_novar, liste_unique)
     
