@@ -47,7 +47,7 @@ def is_file_locked(filepath):
     except PermissionError:
         return True
     
-def get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR) :
+def get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR, MaxRecord=1000) :
     # BeSS_VO est le repertoire de telechargement créé à la racine de l'application
     App_Path = Path(__file__).resolve().parent
 
@@ -62,7 +62,9 @@ def get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR
         .replace("[", "%5B")
         .replace("]", "%5D")
     )
-
+    # Maximum record
+    max_rec = 'MAXREC='+str(MaxRecord)
+    
     # Formatage des dates
     if len(Be_date_d) == 4:
         Be_date_d += "-01-01"
@@ -70,10 +72,12 @@ def get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR
         Be_date_f += "-01-01"
 
     if Be_TargetName == '' :
-        Be_URL = "http://basebe.obspm.fr/cgi-bin/ssapBE_1.0.pl?MAXREC=1000"
+        #Be_URL = "http://basebe.obspm.fr/cgi-bin/ssapBE_1.0.pl?MAXREC=1000"
+        Be_URL = "http://basebe.obspm.fr/cgi-bin/ssapBE_1.0.pl?"+max_rec
     else :
         # Construction de l’URL
-        Be_URL = f"http://basebe.obspm.fr/cgi-bin/ssapBE_1.0.pl?TARGETNAME={Be_TargetName}&MAXREC=1000"
+        #Be_URL = f"http://basebe.obspm.fr/cgi-bin/ssapBE_1.0.pl?TARGETNAME={Be_TargetName}&MAXREC=1000"
+        Be_URL = f"http://basebe.obspm.fr/cgi-bin/ssapBE_1.0.pl?TARGETNAME={Be_TargetName}&"+max_rec
 
     # Préparation du fichier local
     local_dir = os.path.join(App_Path, "BeSS_VO")
@@ -565,7 +569,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     
     return decision
     
-def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR) :
+def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR, MaxRecord=1000) :
     # Variables d'entrée 
     Be_TargetName = object_name
     Be_date_d = date_deb
@@ -575,7 +579,7 @@ def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR)
 
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
 
-    get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR)
+    get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR, MaxRecord)
     table = parse_xml_to_table()
         
     # telecharge dans le répertoire les fichiers si checked est true 
@@ -603,7 +607,7 @@ def get_all_spectres_between_dates (Be_date_d, Be_date_f):
     return object_list, observer_list, nb_spc
 
 
-def object_composer (object_name, month_now, year_now) :
+def object_composer (object_name, month_now, year_now, flag_thumb) :
     # Download tous les spectres entre date_deb et date_fin pour un objet
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
@@ -649,66 +653,130 @@ def object_composer (object_name, month_now, year_now) :
         filename = save_dir/f
         # Ouvrir le fichier FITS
         lamb, pro, hdr = vsp.read_fits_table(filename)
+        # vitesse helio
+        BSS_vhel = -hdr['BSS_RQVH']
         # formatte les profils
         pro = vsp.profil_norm (pro, lamb, zone_norm[0], zone_norm[1])
+        pro,_ = vsp.profil_corr_vhel (pro, lamb, BSS_vhel)
         hdrs.append(hdr)
         profils.append(pro)
         lambs.append(lamb)
 
     all_max = max(pro.max() for pro in profils) * 1.1
+    all_min = min(pro.min() for pro in profils) * 0.9
+    
+    if flag_thumb == True :
 
-    # creation graphique avec vignettes
-    n = len(profils)
-    rows = (n + cols - 1) // cols
+        # creation graphique avec vignettes
+        n = len(profils)
+        rows = (n + cols - 1) // cols
+    
+        fig, axes = plt.subplots(rows, cols, figsize=(3*cols, 3*rows),
+                             sharex=False, sharey=False)
+        
+        # force axes sous forme de tableau 2D
+        axes = np.array(axes).reshape(rows, cols)
+        # titre nom de l'objet
+        fig.suptitle(object_name, fontsize = 16 , fontweight='bold')
+        
+        for i, profile in enumerate(profils):
+            
+            date_obs = hdrs[i]['DATE-OBS'].split('T')[0]
+            
+            r = i // cols
+            c = i % cols
+            ax = axes[r, c]
+        
+            ax.plot(lambs[i],profile, linewidth=1, label= date_obs)
+            
+            # ticks vers l'intérieur sur tous les côtés et ticks actifs en haut/droite
+            ax.tick_params(axis='x', direction='in', top=True, bottom=True)
+            ax.tick_params(axis='x', labelbottom=True, labeltop=False,
+                       pad=-15)   # pad négatif pour les faire entrer dans la zone
+            ax.xaxis.set_ticks_position('both')   # affiche ticks en bas ET en haut
+            # pas de labels en Y
+            ax.set_ylabel("")
+            # retirer labels Y
+            ax.tick_params(axis='y', labelleft=False, labelright=False)
+            
+            ax.tick_params(top=True, right=True)  # active ticks top/right
+            
+            ax.set_xlim(lamb_min, lamb_max)
+            ax.set_ylim(0, all_max)
+            
+            # legend
+            ax.legend(frameon=False,handlelength=1) # trait court
+        
+        # supprimer les cases vides
+        for j in range(n, rows * cols):
+            fig.delaxes(axes[j // cols, j % cols])
+        
+        
+        # enlever les marges autour de la grille
+        #plt.subplots_adjust(wspace=0, hspace=0, left=0, right=1, top=1, bottom=0)
+        plt.subplots_adjust(wspace=0.0, hspace=0.0,
+                        left=0.02, right=0.98, top=0.98, bottom=0.02)
+        fn = object_name+"_t.png"
+        plt.savefig(save_dir/fn, bbox_inches="tight")
+        plt.show()
+        
+    else : # diagramme 2D 
+        
+        offset = 0.8 * (all_max-all_min)   # marge pour éviter toute superposition
+        
+        
+        if len(profils) >= 10 :
+            profils = profils[:10]
+        
+        fig, ax = plt.subplots(figsize=(2, len(profils)*0.5))
 
-    fig, axes = plt.subplots(rows, cols, figsize=(3*cols, 3*rows),
-                         sharex=False, sharey=False)
-    
-    # force axes sous forme de tableau 2D
-    axes = np.array(axes).reshape(rows, cols)
-    # titre nom de l'objet
-    fig.suptitle(object_name, fontsize = 16 , fontweight='bold')
-    
-    for i, profile in enumerate(profils):
         
-        date_obs = hdrs[i]['DATE-OBS'].split('T')[0]
+        for i in range(len(profils)-1, -1, -1) :
+            if i == 0 :
+                color='orange'
+            else :
+                color='C0'
+                
+            j = len(profils)-1 - i # offset pour aller du haut vers le bas
+            
+            date_obs = hdrs[i]['DATE-OBS'].split('T')[0]
+            ax.plot(lambs[i], profils[i] + j * offset, linewidth=1, label= date_obs, color=color)
+            # Position de l’annotation (à droite du profil)
+            x_text = 6540
+            # indice du x le plus proche
+            idx = np.abs(lamb - x_text).argmin()
+            # valeur de y sur le profil, avec offset vertical
+            y_text = profils[i][idx] + j * offset              
         
-        r = i // cols
-        c = i % cols
-        ax = axes[r, c]
-    
-        ax.plot(lambs[i],profile, linewidth=1, label= date_obs)
-        
-        # ticks vers l'intérieur sur tous les côtés et ticks actifs en haut/droite
-        ax.tick_params(axis='x', direction='in', top=True, bottom=True)
-        ax.tick_params(axis='x', labelbottom=True, labeltop=False,
-                   pad=-15)   # pad négatif pour les faire entrer dans la zone
-        ax.xaxis.set_ticks_position('both')   # affiche ticks en bas ET en haut
+            ax.text(
+                x_text, y_text+0.1, date_obs,
+                ha='left', va='bottom',
+                fontsize=7,
+                color='black'
+            )
+            
+        ax.set_xlim(lamb_min, lamb_max)
         # pas de labels en Y
         ax.set_ylabel("")
         # retirer labels Y
-        ax.tick_params(axis='y', labelleft=False, labelright=False)
+        ax.tick_params(axis='y',left=False, labelleft=False, labelright=False)
         
-        ax.tick_params(top=True, right=True)  # active ticks top/right
+        # enlever les marges autour de la grille
+        fontsize_pt = 11           # taille du texte en points
+        fig.suptitle(object_name, fontsize = fontsize_pt , fontweight='bold')
         
-        ax.set_xlim(lamb_min, lamb_max)
-        ax.set_ylim(0, all_max)
-        
-        # legend
-        ax.legend(frameon=False,handlelength=1) # trait court
-    
-    # supprimer les cases vides
-    for j in range(n, rows * cols):
-        fig.delaxes(axes[j // cols, j % cols])
-    
-    # enlever les marges autour de la grille
-    #plt.subplots_adjust(wspace=0, hspace=0, left=0, right=1, top=1, bottom=0)
-    plt.subplots_adjust(wspace=0.0, hspace=0.0,
-                    left=0.02, right=0.98, top=0.95, bottom=0.02)
-    fn = object_name+"_t.png"
-    plt.savefig(save_dir/fn, bbox_inches="tight")
-    plt.show()
-    
+        fontsize_inch = fontsize_pt / 72  # hauteur approximative en inches
+        fig_height_inch = fig.get_figheight()
+        top_margin = 1 - fontsize_inch / fig_height_inch - 0.02  # petite marge supplémentaire
+        fig.subplots_adjust(top=top_margin)
+        fig.subplots_adjust(wspace=0.0, hspace=0.0,
+                        left=0.02, right=0.98, top=top_margin, bottom=0.02)
+        # Légende
+        #ax.legend(loc="upper right")
+
+        fn = object_name+"_s.png"
+        fig.savefig(save_dir/fn, bbox_inches="tight")
+        plt.show()
 
 def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_observers,liste_EE, liste_ME, liste_DE, liste_novar, liste_unique) :
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
@@ -1097,7 +1165,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
             new_p = p.insert_paragraph_before("Emission Event time serie")
             new_p.style = "Heading 2"
             
-            png_names = [n+'_t.png' for n in liste_EE]
+            png_names = [n+'_s.png' for n in liste_EE]
             png_files = [save_dir/n for n in png_names]
             
             # --- Construire le tableau d'images EE time serie ---
@@ -1105,8 +1173,8 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                 table = doc.add_table(rows=1, cols=images_per_row)  # Word veut au moins 1 ligne
                 # Déplacer le tableau juste avant le paragraphe contenant la balise
                 p._p.addprevious(table._tbl)
-                images_per_row = 1
-                display_width = Inches(6)  # adapté au format A4
+                images_per_row = 3
+                display_width = Inches(2)  # adapté au format A4
                 
                 row_cells = table.rows[0].cells
             
@@ -1154,17 +1222,20 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
 print("Lancement de la requête")
 
 #flag = 0 # detection changement par comparaison avec mois précédent pour un objet
-#flag = 1 # spectres d'un objet entre deux dates
+#flag = 1 # spectres d'un objet entre deux dates with thumbnails imaging
 #flag = 2 # Rapport mensuel automatique, pour tous les spectres de tous les objets entre deux dates detection changement
+
 
 flag = 2
 
 #now = datetime.now()
 now= datetime(2025,11, 10) # rapport du mois - 1
 
+
+
 if flag == 0 :
     # comparaison pour un objet
-    object_name= ' HD 72067  '
+    object_name= ' V1374 Ori  '
     nb_to_open = 3
     zone_norm = (6610.0, 6620.0)
     
@@ -1175,32 +1246,29 @@ if flag == 0 :
     decision = object_detect_change(object_name,  zone_norm, month_now, year_now,nb_to_open)
     print(object_name, decision)
 
+
 elif flag == 1 :
     # Download tous les spectres entre date_deb et date_fin pour un objet
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
     # comparaison pour un objet
-    object_name= 'OT Gem'
+    object_name= 'V351 Ori'
     
-    # gestion de la date
-    months = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"
-    ]
+   
     
     # récupère le mois et l'année
     month_now = now.month
     year_now = now.year
     year_name = str(now.year)
     
-    month_name = months[month_now-2]
+  
     
-    object_composer(object_name, month_now, year_now)
+    object_composer(object_name, month_now, year_now, flag_thumb=False)
     
 
 elif flag == 2 :
     
-    with open("tableau.txt", "w") as f:
+    with open("tableau.txt", "w") as f: #debug file to test classifications
         f.write("\n")
     
     
@@ -1269,8 +1337,9 @@ elif flag == 2 :
     
     for o in liste_EE :
         
-        object_composer(o, month_now, year_now)
+        object_composer(o, month_now, year_now, flag_thumb=False)
     
+    # automatic BeSS monthly report with evolutions classification
     create_monthly_word(month_name, year_name, nb_stars, nb_spectra,observer_list,liste_EE, liste_ME, liste_DE, liste_novar, liste_unique)
     
 
