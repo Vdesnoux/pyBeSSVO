@@ -221,11 +221,20 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
     previous_day = date_obj - timedelta(days=1)
     month = previous_day.month
     date_fin = date_obj.strftime("%Y-%m-%d")
-    date_deb = "1910-01-01"
+    date_deb = "1901-01-01"
+    flag_maxrec = True
     
     # fait la requete
-    get_VOlist_from_object(object_name, date_deb, date_fin, Be_lamb_d, Be_HR)
-    table = parse_xml_to_table()
+    while flag_maxrec :
+        get_VOlist_from_object(object_name, date_deb, date_fin, Be_lamb_d, Be_HR)
+        table = parse_xml_to_table()
+        flag_maxrec = False
+        if len(table)== 1000 :
+            flag_maxrec = True
+            Be_year = str(int(date_deb[:4])+ 2)
+            if Be_year == '1903' :
+                Be_year = '2020'
+            date_deb = Be_year+'-01-01'
     
     if len(table) == 0 :
         print("Pas de spectre HR")
@@ -235,9 +244,10 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
         table = parse_xml_to_table()
     
     if len(table)>= 1000 :
-        date_deb = "2020-01-01"
-        get_VOlist_from_object(object_name, date_deb, date_fin, Be_lamb_d, Be_HR)
-        table = parse_xml_to_table()
+        print("Erreur catch max record")
+        #date_deb = "2020-01-01"
+        #get_VOlist_from_object(object_name, date_deb, date_fin, Be_lamb_d, Be_HR)
+        #table = parse_xml_to_table()
 
     # mais on ne garde de la table que les spectres du mois courant
     # et les nb_to_open précedent, si ils existent
@@ -330,8 +340,8 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     """
 
     # zone de normalisation
-    lamb_norm1 = zone_norm[0]
-    lamb_norm2 = zone_norm[1]
+    #lamb_norm1 = zone_norm[0]
+    #lamb_norm2 = zone_norm[1]
     
         
     # construit la liste avec les fichiers du mois plus les nb_to_open précédents
@@ -340,15 +350,18 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     if len(file_names) == 0 :
        print( object_name + ' non trouvé')
        decision = "Unique"
-       return decision
+       delt_ew = 0
+       return decision, delt_ew
    
     if index_to_comp == - 1 :
        decision = "HR-BR"
-       return decision
+       delt_ew = 0
+       return decision, delt_ew
     
     if len(file_names) == 1 :
        decision = "Unique"
-       return decision
+       delt_ew = 0 
+       return decision, delt_ew
    
     
    
@@ -385,7 +398,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     lamb_min = np.max([lamb_last[0], lamb_comp[0]])
     lamb_max = np.min([lamb_last[-1], lamb_comp[-1]])
 
-    lamb_ref = np.arange(round(lamb_min+0.5), round(lamb_max+0.5), 0.1, dtype=np.float64)
+    lamb_ref = np.arange(round(lamb_min+0.5), round(lamb_max-0.5), 0.1, dtype=np.float64)
     
     date_obs_last = hdr_last['DATE-OBS'].split('T')[0]
     date_obs_comp = hdr_comp['DATE-OBS'].split('T')[0]
@@ -393,14 +406,15 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     BSS_vhel_comp = -hdr_comp['BSS_RQVH']
     
     # normalise entre lamb_norm1 et lamb_norm2 
-    pro_last_norm = vsp.profil_norm(pro_last, lamb_last, lamb_norm1, lamb_norm2)
-    pro_comp_norm = vsp.profil_norm(pro_comp, lamb_comp, lamb_norm1, lamb_norm2)
+    pro_last_norm,_,_ = vsp.profil_norm(pro_last, lamb_last, zone_norm)
+    pro_comp_norm,_,_ = vsp.profil_norm(pro_comp, lamb_comp, zone_norm)
     
+
     # affiche les echantillonage
     echx1 = np.diff(lamb_last)[0]
     echx2 = np.diff(lamb_comp)[0]
     print("Echx1 : "+ f"{echx1:.2f}"+" ang/pix" )
-    print("Echx2 : "+ f"{echx2:.2f}"+ "ang/pix")
+    print("Echx2 : "+ f"{echx2:.2f}"+ " ang/pix")
     
     interp_comp = interp1d(lamb_comp, pro_comp_norm, kind='linear', bounds_error=False, fill_value=np.nan)
     pro_comp_norm = interp_comp(lamb_ref)
@@ -409,6 +423,9 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
 
     # on a deux profils avec meme lamb et normalisés
     # pro_comp_norm et pro_comp_last sur lamb_ref
+    # calcul std
+    std1,_,_ =  vsp.profil_std(pro_last_norm, lamb_ref, zone_norm)
+    std2,_,_ = vsp.profil_std(pro_comp_norm, lamb_ref, zone_norm)
 
     # faire un crop sur zone
     band = (6540, 6586)
@@ -426,6 +443,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     # Correction vitesse helio
     pro1,_ = vsp.profil_corr_vhel(pro1, lamb_ref_crop, BSS_vhel_last)
     pro2,_ = vsp.profil_corr_vhel(pro2, lamb_ref_crop, BSS_vhel_comp)
+    
 
     # Calcul largeur equivalente ---
     ew1,pro1_ew,_ = vsp.profil_leq(pro1, lamb_ref_crop, lamb_ref_crop[0], lamb_ref_crop[-1], 50)
@@ -434,15 +452,29 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     ew_moy = abs(ew1+ew2)/2
     percent_ew = round(((abs(delta_ew) / (abs(ew1+ew2)*0.5)) *100)+0.5)
     seuil_ew = 15 # seuil en pourcentage de EW
-    seuil_ew_ME = 10 # seuil en pourcentage de EW
+    seuil_ew_forme = 10
+    seuil_ew_ME = 5 # seuil en pourcentage de EW
     
     # Calcul variation de forme (corrélation) ---
     corr = np.corrcoef(pro1, pro2)[0,1]
     seuil_corr = 0.88  # si corr < seuil → forme différente
     
     # Calcul avec la diff des profils
+    
     pro_diff = abs(pro1_ew-pro2_ew)
     somme = round((np.sum(pro_diff))+0.5)
+    
+    # std sur zone après crop >> trop proche
+    #zone_red = (6540, 6545)
+    #std1 =  vsp.profil_std(pro1, lamb_ref_crop, zone_red)
+    #std2 = vsp.profil_std(pro2, lamb_ref_crop, zone_red)
+    
+    # Calcul du chi2
+    eps = 1e-12
+    var = std1**2 + std2**2 + eps
+    
+    chi2 = np.sum((pro1 - pro2)**2 / var)
+    chi2_red = chi2 / (len(pro1) - 1)
     
     if ew_moy > 16 :
         seuil_diff = 30
@@ -454,28 +486,72 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
         seuil_diff = 15
         seuil_diff2= 7
     
-    
+      
     # Décision automatique ---
-    if abs(ew1+ew2)/2 >= 20 :
+    if ew_moy  >= 20 :
         variation_ew = abs(percent_ew) >= seuil_ew
-        crit_ew =  abs(percent_ew)
-    elif abs(ew1+ew2)/2 <=4 :
-        variation_ew= abs(delta_ew)>=0.4
-        crit_ew =abs(delta_ew)
-    else :
-        variation_ew= abs(delta_ew)>=1
-        crit_ew =abs(delta_ew)
+        perc_ew =  abs(percent_ew)
+        delt_ew = abs(delta_ew)
     
+    elif ew_moy <=4 :
+        variation_ew= abs(delta_ew)>=0.4
+        perc_ew =  abs(percent_ew)
+        delt_ew =abs(delta_ew)
+    
+    else :
+        
+        variation_ew= abs(delta_ew)>=1
+        perc_ew =  abs(percent_ew)
+        delt_ew =abs(delta_ew)
+    
+    variation_ew2 = percent_ew >= seuil_ew_ME
     variation_forme = corr <= seuil_corr
     variation_diff = (abs(somme) >= seuil_diff)
-    variation_diff2 = (abs(somme) >= seuil_diff2)  
+    variation_diff2 = (abs(somme) >= seuil_diff2)
+    test_chi2 = chi2_red > 1.5
+    
+    
+    print(f"Diff ew : {delt_ew :.1f}")
+    print(f"Chi2 : {chi2_red :.1f}")
     
     print("--------------------------------------------------------------")
-    print(f"Leq last : {ew1:.3f},Leq comp : {ew2:.3f}, Variation de leq : {crit_ew:.1f} → {'Oui' if variation_ew else 'Non'}")
-    print(f"Variation de forme : corr={corr:.3f} → {'Oui' if variation_forme else 'Non'}") 
-    print(f"Variation de différence : diff={somme:.3f} → {'Oui' if variation_diff else 'Non'}")
+    leq_data = f"Leq last : {ew1:.2f},Leq comp : {ew2:.2f}, Var de leq : {delt_ew:.1f}  {perc_ew:.0f} %  → {'Oui' if variation_ew else 'Non'}"
+    forme_data =f"Var de forme : corr={corr:.3f} → {'Oui' if variation_forme else 'Non'}"
+    diff_data = f"Var de différence : diff={somme:.0f} seuil={seuil_diff:.0f} → {'Oui' if variation_diff else 'Non'}"
+    diff2_data = f"Var de différence2 seuil={seuil_diff2:.0f}→ {'Oui' if variation_diff2 else 'Non'}"
+    chi2_data = f"Test Chi2 : {chi2_red:.1f} → {'Oui' if test_chi2 else 'Non'}"
+    print(leq_data)
+    print(forme_data) 
+    print(diff_data)
+    print(chi2_data)
+    
   
     
+    sens = "EE" if ew2 > ew1 else "DE"
+    
+    if test_chi2 :
+    
+        if (variation_ew and variation_diff) or (variation_forme and percent_ew > seuil_ew_forme):
+            decision = sens
+    
+        elif ((variation_ew and variation_diff2) or (variation_ew2 and variation_diff2))  :
+        #  elif ((variation_ew and variation_diff2) or (variation_ew2 and variation_diff)):
+            decision = "ME"
+        
+        elif  ((variation_diff) or (variation_forme)) :
+            decision = "SE"
+            
+        else :
+            decision = "-"
+    
+    else:
+        decision = "-"
+  
+    print("---------------------")
+    print (object_name + ":  "+ decision)
+    
+    
+    """
     # Decision
     if variation_ew and variation_diff :
         if ew2 > ew1 :
@@ -509,10 +585,9 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     elif percent_ew > seuil_ew_ME and variation_diff :
         print("---------------------")
         print (object_name + ":  ME ")
-        decision ="ME"        
-    
+            
     elif variation_forme  and not variation_ew :
-        print("---------------------")
+        print("-------------------   --")
         print (object_name + ":  ME ")
         decision ="ME"
     
@@ -525,7 +600,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
         print("---------------------")
         print (object_name + ":  - ")
         decision ="-"
-    
+    """
     print(' ')
     
     try :
@@ -545,20 +620,43 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
         plt.show()
     
     
-    # Tracer le spectre
+    # ---- Tracer le spectre
     
     plt.figure()
     plt.margins(y=0.2)
     plt.plot(lamb_ref_crop, pro2_ew, label = date_obs_comp)
     plt.plot(lamb_ref_crop, pro1_ew, label = date_obs_last)
     ymin, ymax = plt.ylim()
-    plt.ylim(0, ymax)
+    plt.ylim(ymin, ymax) # etait plt.ylim(0, ymax)
     plt.xlabel('Longueur d\'onde')
     plt.ylabel('Intensité')
-    title = object_name +' : '+decision
+    title = object_name + " : " + decision
     plt.title(title)
     #subtitle = f"{ew_moy:.2f}" + "  "+f"{delta_ew:.1f}" + "  "+f"{percent_ew:.0f}"+ "  " + f"{corr:.2f}"+"  "+f"{somme:.2f}"
     #plt.suptitle (subtitle)
+    
+    
+    # mode debug pour critere
+    if 2 == 1 :
+        ax = plt.gca()   # axe courant
+        # Décalage vertical sous l’axe X (en coordonnées d’axes)
+        y0 = -0.3   # première ligne
+        dy = 0.1    # espacement entre lignes
+        
+        texts = [leq_data, forme_data, diff_data, diff2_data, chi2_data]
+        
+        for i, txt in enumerate(texts):
+            ax.text(
+                0, y0 - i * dy,
+                txt,
+                transform=ax.transAxes,
+                ha="left",
+                va="top"
+            )
+        
+        # Laisser de la place en bas pour le texte
+        plt.subplots_adjust(bottom=0.35)
+    
     fn = object_name+'.png'
     plt.legend()
     plt.savefig(save_dir/fn, bbox_inches="tight")
@@ -567,7 +665,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
 
     
     
-    return decision
+    return decision, delta_ew
     
 def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR, MaxRecord=1000) :
     # Variables d'entrée 
@@ -576,11 +674,21 @@ def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR,
     Be_date_f = date_fin
     Be_lamb_d = lamb_raie
     Be_HR = flag_HR
+    flag_maxrec = True
 
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
-
-    get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR, MaxRecord)
-    table = parse_xml_to_table()
+    
+    while flag_maxrec :
+        get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR, MaxRecord)
+        table = parse_xml_to_table()
+        flag_maxrec = False
+        if len(table)== 1000 :
+            flag_maxrec = True
+            Be_year = str(int(date_deb[:4])+ 2)
+            if Be_year == '1903' :
+                Be_year = '2020'
+            Be_date_d = Be_year+'-01-01'
+            
         
     # telecharge dans le répertoire les fichiers si checked est true 
     file_names = [row["fichiers"] for row in table if row.get("checked")]
@@ -637,8 +745,9 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
         exit()
         
     if len(file_names) == 1000 :
-        date_deb = '2020-01-01'
-        file_names = object_list_from_dates(object_name, date_deb, date_fin, lamb_raie, flag_HR)
+        print("Erreur catch maxrecord")
+        #date_deb = '2020-01-01'
+        #file_names = object_list_from_dates(object_name, date_deb, date_fin, lamb_raie, flag_HR)
     
     if len(file_names) >= nb_max_pro :
         file_names = file_names[:nb_max_pro]
@@ -656,7 +765,7 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
         # vitesse helio
         BSS_vhel = -hdr['BSS_RQVH']
         # formatte les profils
-        pro = vsp.profil_norm (pro, lamb, zone_norm[0], zone_norm[1])
+        pro,_,_ = vsp.profil_norm (pro, lamb, zone_norm)
         pro,_ = vsp.profil_corr_vhel (pro, lamb, BSS_vhel)
         hdrs.append(hdr)
         profils.append(pro)
@@ -702,7 +811,8 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
             ax.tick_params(top=True, right=True)  # active ticks top/right
             
             ax.set_xlim(lamb_min, lamb_max)
-            ax.set_ylim(0, all_max)
+            #ax.set_ylim(0, all_max)
+            ax.set_ylim(all_min, all_max)
             
             # legend
             ax.legend(frameon=False,handlelength=1) # trait court
@@ -746,6 +856,8 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
             # indice du x le plus proche
             idx = np.abs(lamb - x_text).argmin()
             # valeur de y sur le profil, avec offset vertical
+            if idx >= len(profils[i]) :
+                idx = len(profils[i])-1
             y_text = profils[i][idx] + j * offset              
         
             ax.text(
@@ -778,7 +890,7 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
         fig.savefig(save_dir/fn, bbox_inches="tight")
         plt.show()
 
-def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_observers,liste_EE, liste_ME, liste_DE, liste_novar, liste_unique) :
+def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_observers,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique) :
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
     template_path = "Template Bess report.docx"
@@ -1006,6 +1118,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
             # --- Charger toutes les images PNG EE ---
             new_p = p.insert_paragraph_before("Emission Event")
             new_p.style = "Heading 2"
+            new_p.paragraph_format.keep_with_next = True
             
             png_names = [n+'.png' for n in liste_EE]
             png_files = [save_dir/n for n in png_names]
@@ -1047,6 +1160,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
             # --- Charger toutes les images PNG DE ---
             new_p = p.insert_paragraph_before("Decreasing Event")
             new_p.style = "Heading 2"
+            new_p.paragraph_format.keep_with_next = True
             
             png_names = [n+'.png' for n in liste_DE]
             png_files = [save_dir/n for n in png_names]
@@ -1084,6 +1198,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
             # --- Charger toutes les images PNG ME ---
             new_p = p.insert_paragraph_before("Moderate Event")
             new_p.style = "Heading 2"
+            new_p.paragraph_format.keep_with_next = True
             
             png_names = [n+'.png' for n in liste_ME]
             png_files = [save_dir/n for n in png_names]
@@ -1120,11 +1235,54 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
             
             p.insert_paragraph_before() # espace après le tableau
             
+        
+            # --- Charger toutes les images PNG SE ---
+            new_p = p.insert_paragraph_before("Shape Event")
+            new_p.style = "Heading 2"
+            new_p.paragraph_format.keep_with_next = True
+            
+            #png_names = [n+'.png' for n in liste_novar]
+            png_names = [n+'.png' for n in liste_SE]
+            png_files = [save_dir/n for n in png_names]
+            
+            # --- Construire le tableau d'images novar ---
+            if png_files:
+                table = doc.add_table(rows=1, cols=images_per_row)  # Word veut au moins 1 ligne
+                # Déplacer le tableau juste avant le paragraphe contenant la balise
+                p._p.addprevious(table._tbl)
+                
+                row_cells = table.rows[0].cells
+            
+                for i, png_file in enumerate(png_files):
+                    # Déterminer la ligne et la colonne
+                    row_idx = i // images_per_row
+                    col_idx = i % images_per_row
+            
+                    # Ajouter une nouvelle ligne si nécessaire
+                    if row_idx >= len(table.rows):
+                        row_cells = table.add_row().cells
+                    else:
+                        row_cells = table.rows[row_idx].cells
+            
+                    # Ajouter l'image dans la cellule
+                    cell = row_cells[col_idx]
+                    paragraph = cell.paragraphs[0]
+                    run = paragraph.add_run()
+                    run.add_picture(str(png_file), width=display_width)
+            
+                    # Centrer le contenu de la cellule
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+           
+                p.insert_paragraph_before() # espace après le tableau
+                
             if 2 == 1 :
                 # --- Charger toutes les images PNG novar ---
                 new_p = p.insert_paragraph_before("No variations")
                 new_p.style = "Heading 2"
+                new_p.paragraph_format.keep_with_next = True
                 
+                #png_names = [n+'.png' for n in liste_novar]
                 png_names = [n+'.png' for n in liste_novar]
                 png_files = [save_dir/n for n in png_names]
                 
@@ -1156,14 +1314,15 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                         # Centrer le contenu de la cellule
                         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
             
-           
-                p.insert_paragraph_before() # espace après le tableau
+               
+                    p.insert_paragraph_before() # espace après le tableau
                 
            
             # ---- insertion time serie des EE
 
             new_p = p.insert_paragraph_before("Emission Event time serie")
             new_p.style = "Heading 2"
+            new_p.paragraph_format.keep_with_next = True
             
             png_names = [n+'_s.png' for n in liste_EE]
             png_files = [save_dir/n for n in png_names]
@@ -1216,26 +1375,28 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
     
 # --------------------------------------------------------------------
 # --------------------------------------------------------------------
-# MAIN - interrogation BeSS
+# ---- MAIN - interrogation BeSS
 # --------------------------------------------------------------------
 
 print("Lancement de la requête")
 
 #flag = 0 # detection changement par comparaison avec mois précédent pour un objet
-#flag = 1 # spectres d'un objet entre deux dates with thumbnails imaging
+#flag = 1 # spectres d'un objet entre deux dates with thumbnails or multiple serie imaging
 #flag = 2 # Rapport mensuel automatique, pour tous les spectres de tous les objets entre deux dates detection changement
 
 
 flag = 2
 
-#now = datetime.now()
-now= datetime(2025,11, 10) # rapport du mois - 1
+# rapport du mois 
+mois = 11
 
+#now = datetime.now()
+now= datetime(2025,mois+1, 10) # rapport du mois (si mois = now on doit faire mois - 1)
 
 
 if flag == 0 :
     # comparaison pour un objet
-    object_name= ' V1374 Ori  '
+    object_name= ' bet CMi'
     nb_to_open = 3
     zone_norm = (6610.0, 6620.0)
     
@@ -1243,7 +1404,7 @@ if flag == 0 :
     month_now = now.month
     year_now = now.year
     
-    decision = object_detect_change(object_name,  zone_norm, month_now, year_now,nb_to_open)
+    decision, delta_ew = object_detect_change(object_name,  zone_norm, month_now, year_now,nb_to_open)
     print(object_name, decision)
 
 
@@ -1252,7 +1413,7 @@ elif flag == 1 :
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
     # comparaison pour un objet
-    object_name= 'V351 Ori'
+    object_name= 'V413 Aur'
     
    
     
@@ -1304,8 +1465,11 @@ elif flag == 2 :
     liste_EE = []
     liste_ME = []
     liste_DE = []
+    liste_SE = []
     liste_novar = []
     liste_unique = []
+    liste_EE_dew = []
+    liste_DE_dew = []
     i = 1 
     
     
@@ -1318,14 +1482,18 @@ elif flag == 2 :
         nb_to_open = 3
         zone_norm = (6610.0, 6620.0)
         
-        decision = object_detect_change(object_name, zone_norm, month_now, year_now, nb_to_open)
+        decision, dew = object_detect_change(object_name, zone_norm, month_now, year_now, nb_to_open)
         #input("Appuie sur Entrée pour continuer...")
         if decision == "EE" :
             liste_EE.append(o)
+            liste_EE_dew.append(abs(dew))
         elif decision == "ME" :
             liste_ME.append(o)
         elif decision == "DE" :
             liste_DE.append(o)
+            liste_DE_dew.append(abs(dew))
+        elif decision == "SE" :
+            liste_SE.append(o)
         elif decision == "Unique" :
             liste_unique.append(o)
         else :
@@ -1333,13 +1501,28 @@ elif flag == 2 :
                 liste_novar.append(o)
         i +=1
    
+    # trie les liste EE par difference de EW
+    liste_EE = [ee for ee, _ in sorted(
+                zip(liste_EE, liste_EE_dew),
+                key=lambda x: x[1],
+                reverse=True
+                )]
+    
+    liste_DE = [de for de, _ in sorted(
+                zip(liste_DE, liste_DE_dew),
+                key=lambda x: x[1],
+                reverse=True
+                )]
+    
     print("time series")
     
     for o in liste_EE :
+        print(o)
         
         object_composer(o, month_now, year_now, flag_thumb=False)
     
+    print("Generation rapport word")
     # automatic BeSS monthly report with evolutions classification
-    create_monthly_word(month_name, year_name, nb_stars, nb_spectra,observer_list,liste_EE, liste_ME, liste_DE, liste_novar, liste_unique)
+    create_monthly_word(month_name, year_name, nb_stars, nb_spectra,observer_list,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique)
     
 

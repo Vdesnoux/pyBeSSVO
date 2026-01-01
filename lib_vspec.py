@@ -33,7 +33,7 @@ def read_fits_table (file_name) :
 
 
 
-def profil_leq (pro, lamb, lamb1, lamb2, nbpts) :
+def profil_leq (pro, lamb, lamb1, lamb2, nbpts=50) :
         
     # Calcul de largeur equivalente entre lamb1 et lamb2
     #----------------------------------------------------
@@ -73,26 +73,43 @@ def profil_leq (pro, lamb, lamb1, lamb2, nbpts) :
 
 
 
-def profil_norm (pro, lamb, lamb_norm1, lamb_norm2) :
+def profil_norm (pro, lamb, zone_norm) :
     
     # Normalisation du profil entre lamb1 et lamb2
     #----------------------------------------------------
-    
+    flag_change = False
+    new_zone = zone_norm
+    lamb_norm1 = zone_norm[0]
+    lamb_norm2 = zone_norm[1]
+    delta = lamb_norm2 - lamb_norm1
     # verif si la range de norm est dans les deux spectres
     if lamb_norm1 < lamb[0] :
-        lamb_norm2 = lamb_norm2+ (lamb[0]-lamb_norm1)
         lamb_norm1 = lamb[0]
-    if lamb_norm2 > lamb[-1] :
-        lamb_norm1 = lamb_norm1+ (lamb[-1]-lamb_norm2)
+        lamb_norm2 = lamb_norm1+delta        
+    if lamb_norm2 > lamb[-1] :       
         lamb_norm2 = lamb[-1]
+        lamb_norm1 = lamb_norm2-delta
         
     # on normalise
     mask = (lamb >= lamb_norm1) & (lamb <= lamb_norm2)
     if not np.any(mask):
-        raise ValueError("Aucun point dans l’intervalle de normalisation.")
+        #raise ValueError("Aucun point dans l’intervalle demandé.")
+        if lamb_norm2 > lamb[-1] :
+            lamb_norm2 =lamb[-1]
+            lamb_norm1 = lamb_norm2-delta
+        if lamb_norm1 < lamb[0] :
+            lamb_norm1 = lamb[0]
+            lamb_norm2 = lamb_norm1+delta   
+        new_zone = (lamb_norm1, lamb_norm2)
+        flag_change = True
+        mask = (lamb >= lamb_norm1) & (lamb <= lamb_norm2)
+        if not np.any(mask):
+            raise ValueError("Aucun point dans l’intervalle demandé.")
+    
     mean_norm = np.nanmean(pro[mask])
     pro_norm = pro / mean_norm
-    return pro_norm
+    
+    return pro_norm, flag_change, new_zone
 
 
 
@@ -111,6 +128,70 @@ def profil_crop (pro, lamb, zone) :
     pro_crop =pro[mask]
     
     return pro_crop, lamb_crop
+
+def profil_std (pro, lamb, zone) :
+    flag_change = False
+    new_zone = zone
+    lamb1 = zone[0]
+    lamb2= zone[1]
+    delta = lamb2-lamb1
+    
+    # check_zone
+    if lamb1 < lamb[0] :
+        lamb1 = lamb[0]
+        lamb2 = lamb1+delta
+        flag_change = True
+        new_zone = (lamb1, lamb2)       
+    if lamb2 > lamb[-1] :       
+        lamb2 = lamb[-1]
+        lamb1 = lamb2-delta
+        flag_change = True
+        new_zone = (lamb1, lamb2)
+        
+    mask = (lamb >= lamb1) & (lamb <= lamb2)
+    if not np.any(mask):
+        raise ValueError("Aucun point dans l’intervalle demandé.")
+        flag_change=True
+        new_zone =(0,0)
+    
+    pro_r =pro[mask]
+    
+    std = np.std(pro_r, ddof=1)
+    
+    return std, flag_change, new_zone
+
+
+def profil_snr (pro, lamb, zone) :
+    flag_change = False
+    new_zone = zone
+    lamb1 = zone[0]
+    lamb2= zone[1]
+    delta = lamb2-lamb1
+    # check_zone
+    if lamb1 < lamb[0] :
+        lamb1 = lamb[0]
+        lamb2 = lamb1+delta
+        flag_change = True
+        new_zone = (lamb1, lamb2)       
+    if lamb2 > lamb[-1] :       
+        lamb2 = lamb[-1]
+        lamb1 = lamb2-delta
+        flag_change = True
+        new_zone = (lamb1, lamb2)
+        
+    mask = (lamb >= lamb1) & (lamb <= lamb2)
+    if not np.any(mask):
+        raise ValueError("Aucun point dans l’intervalle demandé.")
+        flag_change=True
+        new_zone =(0,0)
+        
+    pro_r =pro[mask]
+    
+    sig = np.mean(pro_r)
+    std = np.std(pro_r, ddof=1)
+    snr = int(np.round(sig/std))
+    
+    return snr, flag_change, new_zone
 
 
 
