@@ -34,7 +34,11 @@ import lib_vspec as vsp
 # ALGO : sample au plus grand echx  
 
 
-
+def logme (msg, flag_both = True) :
+    with open("report.txt", "a") as f:
+        f.write(msg+"\n")
+        if flag_both :
+            print(msg)
     
 def is_file_locked(filepath):
     """Renvoie True si le fichier est ouvert/verrouillé par une autre application."""
@@ -214,6 +218,13 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
     
     month = mois_courant
     year = year_courant
+    if month == 12 :
+        year = year+1 
+        month = 1
+    else :
+        month = mois_courant +1
+    
+        
     datem = f"{year}-{month:02d}-01"
     
     # Convertir en datetime
@@ -251,7 +262,7 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
 
     # mais on ne garde de la table que les spectres du mois courant
     # et les nb_to_open précedent, si ils existent
-    prefix = f"{year}-{month:02d}"  # ex : "2025-11"
+    prefix = f"{year_courant}-{mois_courant:02d}"  # ex : "2025-11"
 
     #if object_name == "V442 And" :
         #print(" stop ")
@@ -326,18 +337,15 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
    
     return file_names, index_to_comp
 
-def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_open) :
-    # TODO : zone_crop parametrable 
+def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_open, flag_metrics=False) :
     
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     file_names=[]
     
-    """
-    # année et mois courant
-    now = datetime.now()
-    month = now.month
-    nb_to_open = 3
-    """
+
+    logme("*********************", False)
+    logme(object_name, False)
+
 
     # zone de normalisation
     #lamb_norm1 = zone_norm[0]
@@ -348,7 +356,8 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     file_names, index_to_comp = object_list_comp(object_name, month_now, year_now, nb_to_open )
     
     if len(file_names) == 0 :
-       print( object_name + ' non trouvé')
+       logme( object_name + ' non trouvé')
+       
        decision = "Unique"
        delt_ew = 0
        return decision, delt_ew
@@ -413,8 +422,8 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     # affiche les echantillonage
     echx1 = np.diff(lamb_last)[0]
     echx2 = np.diff(lamb_comp)[0]
-    print("Echx1 : "+ f"{echx1:.2f}"+" ang/pix" )
-    print("Echx2 : "+ f"{echx2:.2f}"+ " ang/pix")
+    logme("Echx1 : "+ f"{echx1:.2f}"+" ang/pix" )
+    logme("Echx2 : "+ f"{echx2:.2f}"+ " ang/pix")
     
     interp_comp = interp1d(lamb_comp, pro_comp_norm, kind='linear', bounds_error=False, fill_value=np.nan)
     pro_comp_norm = interp_comp(lamb_ref)
@@ -457,28 +466,25 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     
     # Calcul variation de forme (corrélation) ---
     corr = np.corrcoef(pro1, pro2)[0,1]
-    seuil_corr = 0.88  # si corr < seuil → forme différente
+    seuil_corr = 0.92  # si corr < seuil → forme différente was 0.88
     
     # Calcul avec la diff des profils
     
     pro_diff = abs(pro1_ew-pro2_ew)
+    pro_diff[pro_diff<0.03]=0
     somme = round((np.sum(pro_diff))+0.5)
-    
-    # std sur zone après crop >> trop proche
-    #zone_red = (6540, 6545)
-    #std1 =  vsp.profil_std(pro1, lamb_ref_crop, zone_red)
-    #std2 = vsp.profil_std(pro2, lamb_ref_crop, zone_red)
-    
+      
     # Calcul du chi2
     eps = 1e-12
-    var = std1**2 + std2**2 + eps
+    # std1 et std2 calculés sur zone de norm
+    var = std1**2 + std2**2 + eps 
     
     chi2 = np.sum((pro1 - pro2)**2 / var)
     chi2_red = chi2 / (len(pro1) - 1)
     
     if ew_moy > 16 :
         seuil_diff = 30
-        seuil_diff2 = 18
+        seuil_diff2 = 16 # was 18
     elif ew_moy > 5 :
         seuil_diff = 20
         seuil_diff2 = 10
@@ -511,19 +517,20 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     test_chi2 = chi2_red > 1.5
     
     
-    print(f"Diff ew : {delt_ew :.1f}")
-    print(f"Chi2 : {chi2_red :.1f}")
+    logme(f"Diff ew : {delt_ew :.1f}")
+    logme(f"Chi2 : {chi2_red :.1f}")
     
-    print("--------------------------------------------------------------")
+    logme("--------------------------------------------------------------")
     leq_data = f"Leq last : {ew1:.2f},Leq comp : {ew2:.2f}, Var de leq : {delt_ew:.1f}  {perc_ew:.0f} %  → {'Oui' if variation_ew else 'Non'}"
     forme_data =f"Var de forme : corr={corr:.3f} → {'Oui' if variation_forme else 'Non'}"
     diff_data = f"Var de différence : diff={somme:.0f} seuil={seuil_diff:.0f} → {'Oui' if variation_diff else 'Non'}"
-    diff2_data = f"Var de différence2 seuil={seuil_diff2:.0f}→ {'Oui' if variation_diff2 else 'Non'}"
+    diff2_data = f"Var de différence2 : diff={somme:.0f} seuil={seuil_diff2:.0f}→ {'Oui' if variation_diff2 else 'Non'}"
     chi2_data = f"Test Chi2 : {chi2_red:.1f} → {'Oui' if test_chi2 else 'Non'}"
-    print(leq_data)
-    print(forme_data) 
-    print(diff_data)
-    print(chi2_data)
+    logme(leq_data)
+    logme(forme_data) 
+    logme(diff_data)
+    logme(diff2_data)
+    logme(chi2_data)
     
   
     
@@ -538,7 +545,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
         #  elif ((variation_ew and variation_diff2) or (variation_ew2 and variation_diff)):
             decision = "ME"
         
-        elif  ((variation_diff) or (variation_forme)) :
+        elif  ((variation_diff2) or (variation_forme)) :
             decision = "SE"
             
         else :
@@ -547,8 +554,9 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     else:
         decision = "-"
   
-    print("---------------------")
-    print (object_name + ":  "+ decision)
+    logme("---------------------")
+    logme (object_name + ":  "+ decision)
+    logme("---------------------")
     
     
     """
@@ -605,9 +613,11 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     
     try :
         with open("tableau.txt", "a") as f:
-            f.write(object_name+","+str(ew1)+","+str(ew2)
-                    +","+str(percent_ew)+ "," 
-                    + str(corr)+","+str(somme)+","+ decision+"\n")
+            f.write(object_name+","+str(round(ew1,2))+","+str(round(ew2,2))
+                    +","+str(round(ew_moy,1))
+                    +","+str(round(percent_ew,0))
+                    +","+str(round(delta_ew,1))
+                    + ","+str(round(corr,3))+","+str(round(somme,0))+","+ decision+"\n")
     except:
         pass
     
@@ -636,8 +646,9 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     #plt.suptitle (subtitle)
     
     
-    # mode debug pour critere
-    if 2 == 1 :
+    # mode debug pour impression criteres
+    
+    if flag_metrics :
         ax = plt.gca()   # axe courant
         # Décalage vertical sous l’axe X (en coordonnées d’axes)
         y0 = -0.3   # première ligne
@@ -890,7 +901,7 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
         fig.savefig(save_dir/fn, bbox_inches="tight")
         plt.show()
 
-def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_observers,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique) :
+def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_observers,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique, flag_with_novar=False) :
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
     template_path = "Template Bess report.docx"
@@ -1276,7 +1287,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
            
                 p.insert_paragraph_before() # espace après le tableau
                 
-            if 2 == 1 :
+            if flag_with_novar :
                 # --- Charger toutes les images PNG novar ---
                 new_p = p.insert_paragraph_before("No variations")
                 new_p.style = "Heading 2"
@@ -1386,17 +1397,18 @@ print("Lancement de la requête")
 
 
 flag = 2
+flag_with_novar = False # imprime aussi les no var
+flag_metrics = False # imprime les criteres
 
 # rapport du mois 
-mois = 11
+mois = 12
 
-#now = datetime.now()
-now= datetime(2025,mois+1, 10) # rapport du mois (si mois = now on doit faire mois - 1)
+now= datetime(2025,mois, 10) # rapport du mois
 
 
 if flag == 0 :
     # comparaison pour un objet
-    object_name= ' bet CMi'
+    object_name= 'HD 37541'
     nb_to_open = 3
     zone_norm = (6610.0, 6620.0)
     
@@ -1404,7 +1416,7 @@ if flag == 0 :
     month_now = now.month
     year_now = now.year
     
-    decision, delta_ew = object_detect_change(object_name,  zone_norm, month_now, year_now,nb_to_open)
+    decision, delta_ew = object_detect_change(object_name,  zone_norm, month_now, year_now,nb_to_open, flag_metrics)
     print(object_name, decision)
 
 
@@ -1444,12 +1456,15 @@ elif flag == 2 :
     year_now = now.year
     year_name = str(now.year)
     
-    month_name = months[month_now-2]
+    month_name = months[month_now-1]
     
     # année et mois courant
-
-    Be_date_f = now.replace(day=1)
-    Be_date_d = (Be_date_f - timedelta(days=1)).replace(day=1)
+    if month_now == 12 or month_now == 1 :
+        Be_date_f = now.replace(day=31)
+        Be_date_d = now.replace(day=1)
+    else :  
+        Be_date_f = now.replace(day=1)
+        Be_date_d = (Be_date_f - timedelta(days=1)).replace(day=1)
     date_fin = Be_date_f.strftime("%Y-%m-%d")
     date_deb = Be_date_d.strftime("%Y-%m-%d")
     
@@ -1482,7 +1497,7 @@ elif flag == 2 :
         nb_to_open = 3
         zone_norm = (6610.0, 6620.0)
         
-        decision, dew = object_detect_change(object_name, zone_norm, month_now, year_now, nb_to_open)
+        decision, dew = object_detect_change(object_name, zone_norm, month_now, year_now, nb_to_open, flag_metrics)
         #input("Appuie sur Entrée pour continuer...")
         if decision == "EE" :
             liste_EE.append(o)
@@ -1523,6 +1538,6 @@ elif flag == 2 :
     
     print("Generation rapport word")
     # automatic BeSS monthly report with evolutions classification
-    create_monthly_word(month_name, year_name, nb_stars, nb_spectra,observer_list,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique)
+    create_monthly_word(month_name, year_name, nb_stars, nb_spectra,observer_list,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique, flag_with_novar)
     
 
