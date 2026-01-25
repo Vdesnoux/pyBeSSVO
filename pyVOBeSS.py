@@ -263,6 +263,7 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
     # mais on ne garde de la table que les spectres du mois courant
     # et les nb_to_open précedent, si ils existent
     prefix = f"{year_courant}-{mois_courant:02d}"  # ex : "2025-11"
+    prefix2 = f"{year_courant}-{(mois_courant+1):02d}" # cas particulier d'un spectre qui commence le dernier jour du mois et fini le lendemain
 
     #if object_name == "V442 And" :
         #print(" stop ")
@@ -270,7 +271,7 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
     current_month_files = [
         row["fichiers"]
         for row in table
-        if row.get("checked") and row.get("date","").startswith(prefix)
+        if row.get("checked") and (row.get("date","").startswith(prefix) or row.get("date","").startswith(prefix2))
         ]
     # Indices de slice : à partir de len(current_month_files), nb_to_open éléments
     if len(current_month_files) != 0 :
@@ -300,6 +301,8 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
                 index_to_comp = len(current_month_files)
                 if len(next_nb_to_open_files) == 0 :
                     # spectre unique
+                    print("Premier(s) spectres")
+                    index_to_comp = -1
                     return file_names, index_to_comp
                 else :
                     # les spectres suivants sont surement BR
@@ -559,56 +562,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     logme("---------------------")
     
     
-    """
-    # Decision
-    if variation_ew and variation_diff :
-        if ew2 > ew1 :
-            print("---------------------")
-            print (object_name + ":  EE ")
-            decision = "EE"
-        else :
-            print("---------------------")
-            print (object_name + ":  DE ")
-            decision = "DE"
     
-    
-    
-    elif variation_forme and percent_ew > seuil_ew_ME:
-        print("percent")
-        if ew2 > ew1 :
-            print("---------------------")
-            print (object_name + ":  EE ")
-            decision = "EE"
-        else :
-            print("---------------------")
-            print (object_name + ":  DE ")
-            decision = "DE"
-    
-    
-    elif variation_ew and not variation_diff and variation_diff2:
-        print("---------------------")
-        print (object_name + ":  ME ")
-        decision ="ME" 
-    
-    elif percent_ew > seuil_ew_ME and variation_diff :
-        print("---------------------")
-        print (object_name + ":  ME ")
-            
-    elif variation_forme  and not variation_ew :
-        print("-------------------   --")
-        print (object_name + ":  ME ")
-        decision ="ME"
-    
-    elif variation_diff and not variation_ew and not variation_forme:
-        print("---------------------")
-        print (object_name + ":  ME ")
-        decision ="ME" 
-    
-    else :
-        print("---------------------")
-        print (object_name + ":  - ")
-        decision ="-"
-    """
     print(' ')
     
     try :
@@ -736,11 +690,14 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
     nb_max_pro = 5 *cols # maximum 5 lignes
     
     # récupère le mois et l'année
-    #month_now = now.month
+    month_now2 = month_now+1
     #year_now = now.year
-
-    #date_fin = '2025-12-01'
-    date_fin = f"{year_now}-{month_now:02d}-01"
+    
+    if month_now == 12 :
+        date_fin=f"{year_now+1}-01-01"
+    else :
+        date_fin = f"{year_now}-{month_now2:02d}-01"
+    
     date_deb = '1901-01-01'
     lamb_raie = '6563'
     flag_HR = 1
@@ -1408,7 +1365,7 @@ now= datetime(2025,mois, 10) # rapport du mois
 
 if flag == 0 :
     # comparaison pour un objet
-    object_name= 'HD 37541'
+    object_name= 'CW Cep'
     nb_to_open = 3
     zone_norm = (6610.0, 6620.0)
     
@@ -1425,7 +1382,7 @@ elif flag == 1 :
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
     # comparaison pour un objet
-    object_name= 'V413 Aur'
+    object_name= 'del Cen'
     
    
     
@@ -1463,7 +1420,7 @@ elif flag == 2 :
         Be_date_f = now.replace(day=31)
         Be_date_d = now.replace(day=1)
     else :  
-        Be_date_f = now.replace(day=1)
+        Be_date_f = now.replace(month=month_now+1).replace(day=1)
         Be_date_d = (Be_date_f - timedelta(days=1)).replace(day=1)
     date_fin = Be_date_f.strftime("%Y-%m-%d")
     date_deb = Be_date_d.strftime("%Y-%m-%d")
