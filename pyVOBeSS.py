@@ -6,10 +6,12 @@ Created on Sun Nov  9 12:23:12 2025
 """
 
 import os
+import webbrowser
 import requests
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import matplotlib.pyplot as plt
+#plt.ioff()
 from datetime import datetime, timedelta
 from scipy.interpolate import interp1d
 import numpy as np
@@ -26,6 +28,11 @@ from docx2pdf import convert
 
 import lib_vspec as vsp
 
+from PySide6.QtWidgets import QApplication
+
+from fractions import Fraction
+from scipy.signal import resample_poly
+
 
 # TODO : mettre les dates dans graphiques
 # TODO : gerer la BR
@@ -35,11 +42,12 @@ import lib_vspec as vsp
 
 
 def logme (msg, flag_both = True) :
-    with open("report.txt", "a") as f:
+    with open("report.txt", "a", encoding="utf-8") as f:
         f.write(msg+"\n")
         if flag_both :
             print(msg)
-    
+            QApplication.processEvents()
+
 def is_file_locked(filepath):
     """Renvoie True si le fichier est ouvert/verrouillé par une autre application."""
     if not os.path.exists(filepath):
@@ -153,7 +161,7 @@ def parse_xml_to_table() :
         observateur = fname.split('%2F')[0][2:]  # [2:] retire "A_"
         l = float(cells[28].text) * 1e10 if cells[28].text else 0.0
         lamb = f"{l:.2f}"
-        obj = cells[4].text[5:]
+        obj = cells[4].text[5:] # type: ignore
 
         results.append({
             "object" : obj,
@@ -348,7 +356,8 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
 
     logme("*********************", False)
     logme(object_name, False)
-
+    logme("*********************", False)
+    QApplication.processEvents()
 
     # zone de normalisation
     #lamb_norm1 = zone_norm[0]
@@ -410,6 +419,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     lamb_min = np.max([lamb_last[0], lamb_comp[0]])
     lamb_max = np.min([lamb_last[-1], lamb_comp[-1]])
 
+    # sampling 0.1 angstroms
     lamb_ref = np.arange(round(lamb_min+0.5), round(lamb_max-0.5), 0.1, dtype=np.float64)
     
     date_obs_last = hdr_last['DATE-OBS'].split('T')[0]
@@ -425,9 +435,20 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     # affiche les echantillonage
     echx1 = np.diff(lamb_last)[0]
     echx2 = np.diff(lamb_comp)[0]
-    logme("Echx1 : "+ f"{echx1:.2f}"+" ang/pix" )
-    logme("Echx2 : "+ f"{echx2:.2f}"+ " ang/pix")
-    
+    logme("Echx1 last: "+ f"{echx1:.2f}"+" ang/pix" )
+    logme("Echx2 comp: "+ f"{echx2:.2f}"+ " ang/pix")
+
+    if echx1 < echx2 :
+        ratio = Fraction(float(echx1 / echx2)).limit_denominator(20)
+        old_lamb = lamb_last.copy()
+        pro_last_norm = resample_poly(pro_last_norm, up=ratio.numerator, down=ratio.denominator)
+        lamb_last = np.linspace( old_lamb[0], old_lamb[-1],len(pro_last_norm))
+    elif echx2 < echx1:
+        ratio = Fraction(float(echx2 / echx1)).limit_denominator(20)
+        pro_comp_norm = resample_poly(pro_comp_norm,up=ratio.numerator,down=ratio.denominator)
+        old_lamb = lamb_comp.copy()
+        lamb_comp = np.linspace(old_lamb[0], old_lamb[-1],len(pro_comp_norm))
+
     interp_comp = interp1d(lamb_comp, pro_comp_norm, kind='linear', bounds_error=False, fill_value=np.nan)
     pro_comp_norm = interp_comp(lamb_ref)
     interp_last = interp1d(lamb_last, pro_last_norm, kind='linear', bounds_error=False, fill_value=np.nan)
@@ -449,8 +470,9 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     pro1 = vsp.profile_zap_atm(pro1b, lamb_ref_crop)
     
     # filtre bruit
-    pro2 = savgol_filter(pro2, window_length=31, polyorder=3)
-    pro1 = savgol_filter(pro1, window_length=31, polyorder=3)
+    win_span = 21
+    pro2 = savgol_filter(pro2, window_length=win_span, polyorder=3)
+    pro1 = savgol_filter(pro1, window_length=win_span, polyorder=3)
     
     # Correction vitesse helio
     pro1,_ = vsp.profil_corr_vhel(pro1, lamb_ref_crop, BSS_vhel_last)
@@ -463,6 +485,8 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     delta_ew = ew1-ew2
     ew_moy = abs(ew1+ew2)/2
     percent_ew = round(((abs(delta_ew) / (abs(ew1+ew2)*0.5)) *100)+0.5)
+
+    # seuils 
     seuil_ew = 15 # seuil en pourcentage de EW
     seuil_ew_forme = 10
     seuil_ew_ME = 5 # seuil en pourcentage de EW
@@ -534,6 +558,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     logme(diff_data)
     logme(diff2_data)
     logme(chi2_data)
+    QApplication.processEvents()
     
   
     
@@ -544,7 +569,8 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
         if (variation_ew and variation_diff) or (variation_forme and percent_ew > seuil_ew_forme):
             decision = sens
     
-        elif ((variation_ew and variation_diff2) or (variation_ew2 and variation_diff2))  :
+        elif ((variation_ew) or (variation_ew2 and variation_diff2 ))  :
+        # elif ((variation_ew and variation_diff2) or (variation_ew2 and variation_diff2))  :
         #  elif ((variation_ew and variation_diff2) or (variation_ew2 and variation_diff)):
             decision = "ME"
         
@@ -581,21 +607,28 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
         plt.xlabel('Longueur d\'onde')
         plt.ylabel('Intensité')
         plt.title('Différence')
-        plt.show()
+        #plt.show()
+        plt.draw()
+        plt.pause(1)
+        plt.close()
     
     
     # ---- Tracer le spectre
-    
-    plt.figure()
-    plt.margins(y=0.2)
-    plt.plot(lamb_ref_crop, pro2_ew, label = date_obs_comp)
-    plt.plot(lamb_ref_crop, pro1_ew, label = date_obs_last)
-    ymin, ymax = plt.ylim()
-    plt.ylim(ymin, ymax) # etait plt.ylim(0, ymax)
-    plt.xlabel('Longueur d\'onde')
-    plt.ylabel('Intensité')
+    fig, ax = plt.subplots()
+    mng = plt.get_current_fig_manager()
+    mng.window.setGeometry(20, 100, 400, 400) #x, y, width, height
+
+    ax.margins(y=0.2)
+    ax.plot(lamb_ref_crop, pro2_ew, label=date_obs_comp)
+    ax.plot(lamb_ref_crop, pro1_ew, label=date_obs_last)
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim(ymin, ymax)      # ou ax.set_ylim(0, ymax)
+
+    ax.set_xlabel("Longueur d'onde")
+    ax.set_ylabel("Intensité")
+
     title = object_name + " : " + decision
-    plt.title(title)
+    ax.set_title(title)
     #subtitle = f"{ew_moy:.2f}" + "  "+f"{delta_ew:.1f}" + "  "+f"{percent_ew:.0f}"+ "  " + f"{corr:.2f}"+"  "+f"{somme:.2f}"
     #plt.suptitle (subtitle)
     
@@ -603,7 +636,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     # mode debug pour impression criteres
     
     if flag_metrics :
-        ax = plt.gca()   # axe courant
+        #ax = plt.gca()   # axe courant
         # Décalage vertical sous l’axe X (en coordonnées d’axes)
         y0 = -0.3   # première ligne
         dy = 0.1    # espacement entre lignes
@@ -620,19 +653,17 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
             )
         
         # Laisser de la place en bas pour le texte
-        plt.subplots_adjust(bottom=0.35)
+        fig.subplots_adjust(bottom=0.35)
     
     fn = object_name+'.png'
-    plt.legend()
-    plt.savefig(save_dir/fn, bbox_inches="tight")
-    plt.show()
-    plt.close()
-
-    
+    ax.legend()
+    fig.savefig(save_dir/fn, bbox_inches="tight")
+    fig.show()
+    plt.pause(0.1) 
     
     return decision, delta_ew
     
-def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR, MaxRecord=1000) :
+def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR, nb_max_pro) :
     # Variables d'entrée 
     Be_TargetName = object_name
     Be_date_d = date_deb
@@ -644,8 +675,9 @@ def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR,
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
     while flag_maxrec :
-        get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR, MaxRecord)
+        get_VOlist_from_object(Be_TargetName, Be_date_d, Be_date_f, Be_lamb_d, Be_HR, 1000)
         table = parse_xml_to_table()
+        print(f"Nombre de spectres trouvés : {len(table)}")
         flag_maxrec = False
         if len(table)== 1000 :
             flag_maxrec = True
@@ -653,13 +685,17 @@ def object_list_from_dates (object_name, date_deb, date_fin, lamb_raie, flag_HR,
             if Be_year == '1903' :
                 Be_year = '2020'
             Be_date_d = Be_year+'-01-01'
+            print(f"Ajustement de la date de début à {Be_date_d} ")
             
         
     # telecharge dans le répertoire les fichiers si checked est true 
     file_names = [row["fichiers"] for row in table if row.get("checked")]
+    if len(file_names)> nb_max_pro:
+        file_names = file_names[:nb_max_pro]
+    
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     download_files(file_names, save_dir)
-    print("fichiers téléchargés")
+    print(f"{len(file_names)} fichiers téléchargés")
 
     return file_names
 
@@ -680,14 +716,19 @@ def get_all_spectres_between_dates (Be_date_d, Be_date_f):
     return object_list, observer_list, nb_spc
 
 
-def object_composer (object_name, month_now, year_now, flag_thumb) :
+def object_composer (object_name, month_now, year_now, nb_max, flag_thumb) :
     # Download tous les spectres entre date_deb et date_fin pour un objet
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     
     # comparaison pour un objet
+    print("Comparaison pour l'objet : " + object_name)
+    QApplication.processEvents()
+
     #object_name= 'OT Gem'
     cols = 6
-    nb_max_pro = 5 *cols # maximum 5 lignes
+    nb_max_pro = nb_max
+
+    #nb_max_pro = 5 *cols # maximum 5 lignes
     
     # récupère le mois et l'année
     month_now2 = month_now+1
@@ -706,7 +747,7 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
     lamb_min = 6540
     lamb_max=6586
     
-    file_names = object_list_from_dates(object_name, date_deb, date_fin, lamb_raie, flag_HR) 
+    file_names = object_list_from_dates(object_name, date_deb, date_fin, lamb_raie, flag_HR, nb_max_pro) 
         
     if len(file_names) == 0 :
         print("Pas de spectres trouvés")
@@ -720,7 +761,8 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
     if len(file_names) >= nb_max_pro :
         file_names = file_names[:nb_max_pro]
         
-        
+    QApplication.processEvents()
+
     # tableau de profils
     hdrs = []
     profils = []
@@ -750,7 +792,9 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
     
         fig, axes = plt.subplots(rows, cols, figsize=(3*cols, 3*rows),
                              sharex=False, sharey=False)
-        
+        mng = plt.get_current_fig_manager()
+        mng.window.move(20,100) #x, y, width, height
+
         # force axes sous forme de tableau 2D
         axes = np.array(axes).reshape(rows, cols)
         # titre nom de l'objet
@@ -795,19 +839,24 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
         plt.subplots_adjust(wspace=0.0, hspace=0.0,
                         left=0.02, right=0.98, top=0.98, bottom=0.02)
         fn = object_name+"_t.png"
-        plt.savefig(save_dir/fn, bbox_inches="tight")
-        plt.show()
+        fig.savefig(save_dir/fn, bbox_inches="tight")
+        #plt.show()
+        
+        fig.show()
+        plt.pause(0.1)
+
         
     else : # diagramme 2D 
         
         offset = 0.8 * (all_max-all_min)   # marge pour éviter toute superposition
         
         
-        if len(profils) >= 10 :
-            profils = profils[:10]
+        if len(profils) >= nb_max :
+            profils = profils[:nb_max]
         
         fig, ax = plt.subplots(figsize=(2, len(profils)*0.5))
-
+        mng = plt.get_current_fig_manager()
+        mng.window.move(20,100) #x, y, width, height
         
         for i in range(len(profils)-1, -1, -1) :
             if i == 0 :
@@ -856,7 +905,10 @@ def object_composer (object_name, month_now, year_now, flag_thumb) :
 
         fn = object_name+"_s.png"
         fig.savefig(save_dir/fn, bbox_inches="tight")
-        plt.show()
+        # plt.show()
+        fig.show()
+        plt.pause(0.1)
+
 
 def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_observers,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique, flag_with_novar=False) :
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
@@ -1340,161 +1392,191 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
     doc.save(output_docx)
     convert(output_docx)
     print(f"✅ Rapport Word et pdf généré : {output_docx}")
+    webbrowser.open(output_docx.with_suffix('.pdf').as_uri())
     
 # --------------------------------------------------------------------
 # --------------------------------------------------------------------
 # ---- MAIN - interrogation BeSS
 # --------------------------------------------------------------------
 
-print("Lancement de la requête")
+def main_dispatch( flag, mois, year, object_name, date_deb, date_fin, nb_max = 16,
+                  flag_with_novar=False, flag_metrics=False, flag_noreport=False, flag_composer=False) :
 
-#flag = 0 # detection changement par comparaison avec mois précédent pour un objet
-#flag = 1 # spectres d'un objet entre deux dates with thumbnails or multiple serie imaging
-#flag = 2 # Rapport mensuel automatique, pour tous les spectres de tous les objets entre deux dates detection changement
+    print("Lancement de la requête")
 
-
-flag = 2
-flag_with_novar = False # imprime aussi les no var
-flag_metrics = False # imprime les criteres
-
-# rapport du mois 
-mois = 12
-
-now= datetime(2025,mois, 10) # rapport du mois
+    #flag = 0 # detection changement par comparaison avec mois précédent pour un objet
+    #flag = 1 # spectres d'un objet entre deux dates with thumbnails or multiple serie imaging
+    #flag = 2 # Rapport mensuel automatique, pour tous les spectres de tous les objets entre deux dates detection changement
 
 
-if flag == 0 :
-    # comparaison pour un objet
-    object_name= 'CW Cep'
-    nb_to_open = 3
-    zone_norm = (6610.0, 6620.0)
-    
-    # récupère le mois et l'année
-    month_now = now.month
-    year_now = now.year
-    
-    decision, delta_ew = object_detect_change(object_name,  zone_norm, month_now, year_now,nb_to_open, flag_metrics)
-    print(object_name, decision)
+    #flag = 0
+    #flag_with_novar = False # imprime aussi les no var
+    #flag_metrics = False # imprime les criteres
+    #flag_noreport = True # ne genere pas le rapport word
+
+    # rapport du mois 
+    #mois = 6
+
+    now= datetime(year,mois, 10) # rapport du mois
+    plt.close('all')
 
 
-elif flag == 1 :
-    # Download tous les spectres entre date_deb et date_fin pour un objet
-    save_dir = Path(__file__).resolve().parent / "BeSS_VO"
-    
-    # comparaison pour un objet
-    object_name= 'del Cen'
-    
-   
-    
-    # récupère le mois et l'année
-    month_now = now.month
-    year_now = now.year
-    year_name = str(now.year)
-    
-  
-    
-    object_composer(object_name, month_now, year_now, flag_thumb=False)
-    
-
-elif flag == 2 :
-    
-    with open("tableau.txt", "w") as f: #debug file to test classifications
-        f.write("\n")
-    
-    
-    # gestion de la date
-    months = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"
-    ]
-    
-    # récupère le mois et l'année
-    month_now = now.month
-    year_now = now.year
-    year_name = str(now.year)
-    
-    month_name = months[month_now-1]
-    
-    # année et mois courant
-    if month_now == 12 or month_now == 1 :
-        Be_date_f = now.replace(day=31)
-        Be_date_d = now.replace(day=1)
-    else :  
-        Be_date_f = now.replace(month=month_now+1).replace(day=1)
-        Be_date_d = (Be_date_f - timedelta(days=1)).replace(day=1)
-    date_fin = Be_date_f.strftime("%Y-%m-%d")
-    date_deb = Be_date_d.strftime("%Y-%m-%d")
-    
-    # on lance la requete
-    object_list, observer_list, nb_spectra = get_all_spectres_between_dates (date_deb, date_fin)
-    nb_stars = str(len(object_list))
-    print("Nombre objets : " + nb_stars)
-    print("Nombre spectres : " + nb_spectra)
-    print("Nombre observateurs : " + str(len(observer_list)))
-    print('')
-    
-    # liste decision
-    liste_EE = []
-    liste_ME = []
-    liste_DE = []
-    liste_SE = []
-    liste_novar = []
-    liste_unique = []
-    liste_EE_dew = []
-    liste_DE_dew = []
-    i = 1 
-    
-    
-    
-    for o in object_list:
-        
-        print("************")
-        print(str(i)+" - "+ o)
-        object_name= o
+    if flag == 0 :
+        # comparaison pour un objet
+        #object_name= 'gam Cas'
         nb_to_open = 3
         zone_norm = (6610.0, 6620.0)
         
-        decision, dew = object_detect_change(object_name, zone_norm, month_now, year_now, nb_to_open, flag_metrics)
-        #input("Appuie sur Entrée pour continuer...")
-        if decision == "EE" :
-            liste_EE.append(o)
-            liste_EE_dew.append(abs(dew))
-        elif decision == "ME" :
-            liste_ME.append(o)
-        elif decision == "DE" :
-            liste_DE.append(o)
-            liste_DE_dew.append(abs(dew))
-        elif decision == "SE" :
-            liste_SE.append(o)
-        elif decision == "Unique" :
-            liste_unique.append(o)
-        else :
-            if not decision == "HR-BR":
-                liste_novar.append(o)
-        i +=1
-   
-    # trie les liste EE par difference de EW
-    liste_EE = [ee for ee, _ in sorted(
-                zip(liste_EE, liste_EE_dew),
-                key=lambda x: x[1],
-                reverse=True
-                )]
-    
-    liste_DE = [de for de, _ in sorted(
-                zip(liste_DE, liste_DE_dew),
-                key=lambda x: x[1],
-                reverse=True
-                )]
-    
-    print("time series")
-    
-    for o in liste_EE :
-        print(o)
+        # récupère le mois et l'année
+        month_now = now.month
+        year_now = now.year
         
-        object_composer(o, month_now, year_now, flag_thumb=False)
-    
-    print("Generation rapport word")
-    # automatic BeSS monthly report with evolutions classification
-    create_monthly_word(month_name, year_name, nb_stars, nb_spectra,observer_list,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique, flag_with_novar)
-    
+        decision, delta_ew = object_detect_change(object_name,  zone_norm, month_now, year_now,nb_to_open, flag_metrics)
+        #plt.show()
 
+    elif flag == 1 :
+        # Download tous les spectres entre date_deb et date_fin pour un objet
+        save_dir = Path(__file__).resolve().parent / "BeSS_VO"
+        
+        #object_name= 'del Cen'
+        
+        # récupère le mois et l'année
+        month_now = now.month
+        year_now = now.year
+    
+        
+        object_composer(object_name, month_now, year_now, nb_max=nb_max,flag_thumb=flag_composer)
+        #plt.show()
+
+    elif flag == 2 :
+        
+        with open("tableau.txt", "w") as f: #debug file to test classifications
+            f.write("\n")
+        
+        # gestion de la date
+        months = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+        ]
+        
+        # récupère le mois et l'année
+        month_now = now.month
+        year_now = now.year
+        
+        month_name = months[month_now-1]
+        
+        # année et mois courant
+        if month_now == 12 or month_now == 1 :
+            Be_date_f = now.replace(day=31)
+            Be_date_d = now.replace(day=1)
+        else :  
+            Be_date_f = now.replace(month=month_now+1).replace(day=1)
+            Be_date_d = (Be_date_f - timedelta(days=1)).replace(day=1)
+        
+        date_fin = Be_date_f.strftime("%Y-%m-%d")
+        date_deb = Be_date_d.strftime("%Y-%m-%d")
+        
+        # on lance la requete
+        object_list, observer_list, nb_spectra = get_all_spectres_between_dates (date_deb, date_fin)
+        nb_stars = str(len(object_list))
+        print("Nombre objets : " + nb_stars)
+        print("Nombre spectres : " + nb_spectra)
+        print("Nombre observateurs : " + str(len(observer_list)))
+        print('')
+        QApplication.processEvents()
+        
+        # liste decision
+        liste_EE = []
+        liste_ME = []
+        liste_DE = []
+        liste_SE = []
+        liste_novar = []
+        liste_unique = []
+        liste_EE_dew = []
+        liste_DE_dew = []
+        i = 1 
+
+        #object_list = object_list[:10]
+        
+        for o in object_list:
+            
+            print("************")
+            print(str(i)+"/"+str(len(object_list))+" - "+ o)
+            print("************")
+            object_name= o
+            nb_to_open = 3
+            zone_norm = (6610.0, 6620.0)
+            
+            decision, dew = object_detect_change(object_name, zone_norm, month_now, year_now, nb_to_open, flag_metrics)
+            QApplication.processEvents()
+
+            if decision == "EE" :
+                liste_EE.append(o)
+                liste_EE_dew.append(abs(dew))
+            elif decision == "ME" :
+                liste_ME.append(o)
+            elif decision == "DE" :
+                liste_DE.append(o)
+                liste_DE_dew.append(abs(dew))
+            elif decision == "SE" :
+                liste_SE.append(o)
+            elif decision == "Unique" :
+                liste_unique.append(o)
+            else :
+                if not decision == "HR-BR":
+                    liste_novar.append(o)
+            i +=1
+    
+        # trie les liste EE par difference de EW
+        liste_EE = [ee for ee, _ in sorted(
+                    zip(liste_EE, liste_EE_dew),
+                    key=lambda x: x[1],
+                    reverse=True
+                    )]
+        
+        liste_DE = [de for de, _ in sorted(
+                    zip(liste_DE, liste_DE_dew),
+                    key=lambda x: x[1],
+                    reverse=True
+                    )]
+        #plt.show()
+        print("time series")
+        
+        for o in liste_EE :
+            print(o)
+            #nb_max = 15
+            
+            object_composer(o, month_now, year_now, nb_max,flag_thumb=False)
+        
+        #plt.show()
+
+        if not flag_noreport:
+            print("Generation rapport word")
+            # automatic BeSS monthly report with evolutions classification
+            create_monthly_word(month_name, str(year_now), nb_stars, nb_spectra,observer_list,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique, flag_with_novar)
+        
+
+#********************************************************
+# Main program
+# *******************************************************
+
+if __name__ == "__main__":
+    #flag = 0 # detection changement par comparaison avec mois précédent pour un objet
+    #flag = 1 # spectres d'un objet entre deux dates with thumbnails or multiple serie imaging
+    #flag = 2 # Rapport mensuel automatique, pour tous les spectres de tous les objets entre deux dates detection changement
+
+
+    flag = 1
+    flag_with_novar = False # imprime aussi les no var
+    flag_metrics = False # imprime les criteres
+    flag_noreport = True # ne genere pas le rapport word
+
+    # rapport du mois 
+    year = 2026
+    mois = 6
+    nb_max= 10
+
+    object_name= 'kap Dra'
+
+    main_dispatch(flag, mois, year, object_name, date_deb=None, date_fin=None, flag_with_novar=flag_with_novar, flag_metrics=flag_metrics, flag_noreport=flag_noreport)
+    plt.show()
