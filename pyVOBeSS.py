@@ -11,8 +11,9 @@ import requests
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import matplotlib.pyplot as plt
-#plt.ioff()
+plt.rcParams['figure.max_open_warning'] = 0
 from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from scipy.interpolate import interp1d
 import numpy as np
 import time
@@ -156,6 +157,10 @@ def parse_xml_to_table() :
             continue
 
         # Extraction des valeurs (VB6 index 0, 28, 61)
+        
+        ras_s, dec_s = cells[6].text.split(' ')
+        ra_deg= float(ras_s)
+        dec_deg = float(dec_s)
         fname = cells[0].text[47:] if cells[0].text else ""
         date_obs = cells[61].text if cells[61].text else ""
         observateur = fname.split('%2F')[0][2:]  # [2:] retire "A_"
@@ -169,6 +174,8 @@ def parse_xml_to_table() :
             "observer": observateur,
             "date": date_obs,
             "lamb": lamb,
+            "RA" : ra_deg,
+            "DEC" : dec_deg,
             "checked": True,
         })
 
@@ -232,6 +239,7 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
     else :
         month = mois_courant +1
     
+    dec_str='0'
         
     datem = f"{year}-{month:02d}-01"
     
@@ -242,6 +250,7 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
     date_fin = date_obj.strftime("%Y-%m-%d")
     date_deb = "1901-01-01"
     flag_maxrec = True
+     
     
     # fait la requete
     while flag_maxrec :
@@ -256,11 +265,36 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
             date_deb = Be_year+'-01-01'
     
     if len(table) == 0 :
-        print("Pas de spectre HR")
+        print("Pas de spectre HR ce mois ci")
         Be_HR=0
         # fait la requete
         get_VOlist_from_object(object_name, date_deb, date_fin, Be_lamb_d, Be_HR)
         table = parse_xml_to_table()
+
+    # test la date du dernier spectre trouvé
+    try :
+        dt = datetime.strptime(table[0].get("date"), "%Y-%m-%d %H:%M:%S.%f")
+    except :
+        try :
+            dt = datetime.strptime(table[0].get("date"), "%Y-%m-%d %H:%M:%S")
+        except :
+            dt=date_fin
+    try :
+        dt = dt.strftime("%Y-%m-%d")
+    except :
+        print(object_name)
+        print(dt)
+        return [],-1,''
+    dt =datetime.strptime(dt, "%Y-%m-%d")
+    #df = datetime.strptime(date_fin, "%Y-%m-%d")
+    df = datetime(year_courant, mois_courant, 1)
+    if dt < df :
+        print (f"date antérieure au mois courant : {date_fin}")
+        year_courant = dt.year
+        mois_courant = dt.month
+
+    
+    
     
     if len(table)>= 1000 :
         print("Erreur catch max record")
@@ -275,7 +309,8 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
 
     #if object_name == "V442 And" :
         #print(" stop ")
-        
+
+   
     current_month_files = [
         row["fichiers"]
         for row in table
@@ -311,12 +346,14 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
                     # spectre unique
                     print("Premier(s) spectres")
                     index_to_comp = -1
-                    return file_names, index_to_comp
+                    dec_str=''
+                    return file_names, index_to_comp, dec_str
                 else :
                     # les spectres suivants sont surement BR
                     print("Spectre suivants non HR")
                     index_to_comp = -1
-                    return file_names, index_to_comp
+                    dec_str=''
+                    return file_names, index_to_comp, dec_str
             
     else :
         # sans doute un spectre BR...
@@ -345,17 +382,22 @@ def object_list_comp (object_name, mois_courant, year_courant, nb_to_open = 3) :
             print("Il y a un pb...")
             file_names=[]
             index_to_comp=-1
-   
-    return file_names, index_to_comp
 
-def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_open, flag_metrics=False) :
+    try :
+        dec_str= str(int(float(table[0].get("DEC"))))
+    except :
+        dec_str=''
+    
+    return file_names, index_to_comp, dec_str
+
+def object_detect_change (object_name,zone_norm, month_now, year_now, nb_to_open, flag_metrics=False) :
     
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
     file_names=[]
     
 
     logme("*********************", False)
-    logme(object_name, False)
+    logme(object_name , False)
     logme("*********************", False)
     QApplication.processEvents()
 
@@ -365,7 +407,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     
         
     # construit la liste avec les fichiers du mois plus les nb_to_open précédents
-    file_names, index_to_comp = object_list_comp(object_name, month_now, year_now, nb_to_open )
+    file_names, index_to_comp, dec_str = object_list_comp(object_name, month_now, year_now, nb_to_open )
     
     if len(file_names) == 0 :
        logme( object_name + ' non trouvé')
@@ -583,6 +625,7 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     else:
         decision = "-"
   
+    logme(f"δ: {dec_str}")
     logme("---------------------")
     logme (object_name + ":  "+ decision)
     logme("---------------------")
@@ -627,12 +670,19 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
     ax.set_xlabel("Longueur d'onde")
     ax.set_ylabel("Intensité")
 
-    title = object_name + " : " + decision
+    title = object_name +" : " + decision
     ax.set_title(title)
     #subtitle = f"{ew_moy:.2f}" + "  "+f"{delta_ew:.1f}" + "  "+f"{percent_ew:.0f}"+ "  " + f"{corr:.2f}"+"  "+f"{somme:.2f}"
     #plt.suptitle (subtitle)
+    ax.text(
+        0.02, 0.95,        # position : 2% depuis la gauche, 95% depuis le bas
+        f" δ: {dec_str} °",
+        transform=ax.transAxes,
+        fontsize=8,
+        verticalalignment='top'
+    )
     
-    
+ 
     # mode debug pour impression criteres
     
     if flag_metrics :
@@ -654,8 +704,9 @@ def object_detect_change (object_name, zone_norm, month_now, year_now, nb_to_ope
         
         # Laisser de la place en bas pour le texte
         fig.subplots_adjust(bottom=0.35)
-    
-    fn = object_name+'.png'
+
+    fn = object_name.replace("*", "_") + ".png"
+    #fn = object_name+'.png'
     ax.legend()
     fig.savefig(save_dir/fn, bbox_inches="tight")
     fig.show()
@@ -709,6 +760,7 @@ def get_all_spectres_between_dates (Be_date_d, Be_date_f):
     
     object_list = list(set([row["object"] for row in table]))
     observer_list = list(set([row["observer"] for row in table]))
+
     nb_spc = str(len(table))
     count_per_observer = Counter(s["observer"] for s in table)
     observer_list = [[obs, count] for obs, count in count_per_observer.items()]
@@ -751,7 +803,7 @@ def object_composer (object_name, month_now, year_now, nb_max, flag_thumb) :
         
     if len(file_names) == 0 :
         print("Pas de spectres trouvés")
-        exit()
+        return
         
     if len(file_names) == 1000 :
         print("Erreur catch maxrecord")
@@ -903,12 +955,11 @@ def object_composer (object_name, month_now, year_now, nb_max, flag_thumb) :
         # Légende
         #ax.legend(loc="upper right")
 
-        fn = object_name+"_s.png"
+        fn = object_name.replace("*", "_") + "_s.png"
         fig.savefig(save_dir/fn, bbox_inches="tight")
         # plt.show()
         fig.show()
         plt.pause(0.1)
-
 
 def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_observers,liste_EE, liste_ME, liste_DE, liste_SE, liste_novar, liste_unique, flag_with_novar=False) :
     save_dir = Path(__file__).resolve().parent / "BeSS_VO"
@@ -1167,6 +1218,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                     cell = row_cells[col_idx]
                     paragraph = cell.paragraphs[0]
                     run = paragraph.add_run()
+                    png_file = png_file.with_name(png_file.name.replace("*", "_"))
                     run.add_picture(str(png_file), width=display_width)
             
                     # Centrer le contenu de la cellule
@@ -1208,6 +1260,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                     cell = row_cells[col_idx]
                     paragraph = cell.paragraphs[0]
                     run = paragraph.add_run()
+                    png_file = png_file.with_name(png_file.name.replace("*", "_"))
                     run.add_picture(str(png_file), width=display_width)
             
                     # Centrer le contenu de la cellule
@@ -1220,7 +1273,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
             new_p.style = "Heading 2"
             new_p.paragraph_format.keep_with_next = True
             
-            png_names = [n+'.png' for n in liste_ME]
+            png_names = [n.replace("*", "_")+'.png' for n in liste_ME]
             png_files = [save_dir/n for n in png_names]
             
             # --- Construire le tableau d'images ME ---
@@ -1246,7 +1299,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                     cell = row_cells[col_idx]
                     paragraph = cell.paragraphs[0]
                     run = paragraph.add_run()
-                    run.add_picture(str(png_file), width=display_width)
+                    run.add_picture(str(png_file.with_name(png_file.name.replace("*", "_"))), width=display_width)
             
                     # Centrer le contenu de la cellule
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1288,7 +1341,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                     cell = row_cells[col_idx]
                     paragraph = cell.paragraphs[0]
                     run = paragraph.add_run()
-                    run.add_picture(str(png_file), width=display_width)
+                    run.add_picture(str(png_file.with_name(png_file.name.replace("*", "_"))), width=display_width)
             
                     # Centrer le contenu de la cellule
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1329,7 +1382,7 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                         cell = row_cells[col_idx]
                         paragraph = cell.paragraphs[0]
                         run = paragraph.add_run()
-                        run.add_picture(str(png_file), width=display_width)
+                        run.add_picture(str(png_file.with_name(png_file.name.replace("*", "_"))), width=display_width)
                 
                         # Centrer le contenu de la cellule
                         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1372,7 +1425,9 @@ def create_monthly_word (month_name, year_name, nb_stars, nb_spectra,liste_obser
                     cell = row_cells[col_idx]
                     paragraph = cell.paragraphs[0]
                     run = paragraph.add_run()
-                    run.add_picture(str(png_file), width=display_width)
+                    png_file = png_file.with_name(png_file.name.replace("*", "_"))
+                    if png_file.exists():
+                        run.add_picture(str(png_file), width=display_width)
             
                     # Centrer le contenu de la cellule
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1428,10 +1483,10 @@ def main_dispatch( flag, mois, year, object_name, date_deb, date_fin, nb_max = 1
         zone_norm = (6610.0, 6620.0)
         
         # récupère le mois et l'année
-        month_now = now.month
-        year_now = now.year
+        month_now = mois
+        year_now = year
         
-        decision, delta_ew = object_detect_change(object_name,  zone_norm, month_now, year_now,nb_to_open, flag_metrics)
+        decision, delta_ew = object_detect_change(object_name,zone_norm, month_now, year_now,nb_to_open, flag_metrics)
         #plt.show()
 
     elif flag == 1 :
@@ -1441,8 +1496,8 @@ def main_dispatch( flag, mois, year, object_name, date_deb, date_fin, nb_max = 1
         #object_name= 'del Cen'
         
         # récupère le mois et l'année
-        month_now = now.month
-        year_now = now.year
+        month_now = mois
+        year_now = year
     
         
         object_composer(object_name, month_now, year_now, nb_max=nb_max,flag_thumb=flag_composer)
@@ -1477,7 +1532,7 @@ def main_dispatch( flag, mois, year, object_name, date_deb, date_fin, nb_max = 1
         date_deb = Be_date_d.strftime("%Y-%m-%d")
         
         # on lance la requete
-        object_list, observer_list, nb_spectra = get_all_spectres_between_dates (date_deb, date_fin)
+        object_list,observer_list, nb_spectra = get_all_spectres_between_dates (date_deb, date_fin)
         nb_stars = str(len(object_list))
         print("Nombre objets : " + nb_stars)
         print("Nombre spectres : " + nb_spectra)
@@ -1506,6 +1561,7 @@ def main_dispatch( flag, mois, year, object_name, date_deb, date_fin, nb_max = 1
             object_name= o
             nb_to_open = 3
             zone_norm = (6610.0, 6620.0)
+            
             
             decision, dew = object_detect_change(object_name, zone_norm, month_now, year_now, nb_to_open, flag_metrics)
             QApplication.processEvents()
@@ -1546,8 +1602,8 @@ def main_dispatch( flag, mois, year, object_name, date_deb, date_fin, nb_max = 1
             print(o)
             #nb_max = 15
             
-            object_composer(o, month_now, year_now, nb_max,flag_thumb=False)
-        
+            nb_serie=object_composer(o, month_now, year_now, nb_max,flag_thumb=False)
+
         #plt.show()
 
         if not flag_noreport:
@@ -1578,5 +1634,5 @@ if __name__ == "__main__":
 
     object_name= 'kap Dra'
 
-    main_dispatch(flag, mois, year, object_name, date_deb=None, date_fin=None, flag_with_novar=flag_with_novar, flag_metrics=flag_metrics, flag_noreport=flag_noreport)
+    main_dispatch(flag, mois, year, object_name, date_deb=None, date_fin=None, nb_max=nb_max, flag_with_novar=flag_with_novar, flag_metrics=flag_metrics, flag_noreport=flag_noreport)
     plt.show()
